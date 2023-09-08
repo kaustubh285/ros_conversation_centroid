@@ -26,7 +26,7 @@ To install this package, clone the repository into your ROS workspace and build 
 
 ```
 cd ~/catkin_ws/src
-git clone https://github.com/your_username/ros_conversation_centroid.git
+git clone https://github.com/kaustubh285/ros_conversation_centroid/
 cd ..
 catkin_make
 source devel/setup.bash
