@@ -10,7 +10,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from std_msgs.msg import String
 import numpy as np
-
+import json
 
 class ConversationDetectionNode:
     def __init__(self) -> None:
@@ -102,12 +102,14 @@ class ConversationDetectionNode:
                 conv_centroid_2d,
                 conv_centroid_3d,
             ) = self.calculate_conversation_centroid_2D_3D(interacting_human_indices)
-            rospy.loginfo(
-                f"2d centroid - {conv_centroid_2d} , 3d centroid - {conv_centroid_3d}"
-            )
-            rospy.loginfo(
-                f"humans data - {self.humans_data} \n tracked_humans data - {self.tracked_humans} \n social_interactions data - {social_interactions} \n interacting_human_indices - {interacting_human_indices}"
-            )
+
+            self.helper_publish_data(conv_centroid_2d, conv_centroid_3d, social_interactions)
+            # rospy.loginfo(
+            #     f"2d centroid - {conv_centroid_2d} , 3d centroid - {conv_centroid_3d}"
+            # )
+            # rospy.loginfo(
+            #     f"humans data - {self.humans_data} \n tracked_humans data - {self.tracked_humans} \n social_interactions data - {social_interactions} \n interacting_human_indices - {interacting_human_indices}"
+            # )
             self.helper_update_display_images(
                 "RGB Image",
                 rgb_image,
@@ -131,6 +133,52 @@ class ConversationDetectionNode:
         except:
             rospy.logdebug("Error in depth_image_callback")
 
+    def helper_publish_data(self, conv_centroid_2d, conv_centroid_3d, social_interactions):
+        try:
+            rospy.loginfo('Inside publish data')
+            data_to_publish = []
+
+            # Create a dictionary for each conversation
+            conversation_data = {
+                'conversation_centroid_2d': conv_centroid_2d,
+                'conversation_centroid_3d': conv_centroid_3d,
+                'interacting_humans_type_list':social_interactions,
+                'agents_poses': [], 
+                
+            }
+
+            for idx, human in enumerate(list(
+                self.tracked_humans.items()
+            )):
+                human = human[1]
+                agent_pose = {
+                    'agent': f'human-{idx}',
+                    'data': {
+                        'bounding_box': human['data']['bounding_box'],
+                        'body_angle_x': human['data']['body_angle_x'],
+                        'body_angle_y': human['data']['body_angle_y'],
+                        'centroid_2d': human['data']['centroid_2d'],
+                        'centroid_3d': human['data']['centroid_3d'].tolist()
+                    }
+                }
+                conversation_data['agents_poses'].append(agent_pose)
+            
+
+
+            data_to_publish.append({'conversation_data_0':conversation_data})
+
+            json_string = json.dumps(data_to_publish)
+
+            json_msg = String()
+            json_msg.data = json_string
+
+            self.pub.publish(json_msg)
+
+            rospy.loginfo(data_to_publish)
+        except:
+            rospy.logdebug(traceback.print_exc())
+            rospy.loginfo("Error in publish data")
+        
     def helper_rgb_human_detect(self, img):
         rospy.loginfo("Starting helper_rgb_human_detect")
         height, width, _ = img.shape
@@ -287,7 +335,8 @@ class ConversationDetectionNode:
 
                 h1_centroid_3d = self.compute_3d_centroid(h1_centroid_2d)
                 h2_centroid_3d = self.compute_3d_centroid(h2_centroid_2d)
-
+                self.tracked_humans[i]['data']['centroid_3d'] = h1_centroid_3d
+                self.tracked_humans[j]['data']['centroid_3d'] = h2_centroid_3d
                 h1_angle_x = np.radians(human1["data"]["body_angle_x"])
                 h1_angle_y = np.radians(human1["data"]["body_angle_y"])
                 h2_angle_x = np.radians(human2["data"]["body_angle_x"])
@@ -387,16 +436,7 @@ class ConversationDetectionNode:
                 cv2.rectangle(
                     img, (x, y), (x + w, y + h), (0, 255, 255), 2
                 )  # Yellow color for non-interacting humans
-            cv2.putText(
-                img,
-                human_number,
-                (x + w, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
+            
 
         # Draw the 2D conversation center if available
         if conversation_center_2d is not None:
@@ -410,22 +450,24 @@ class ConversationDetectionNode:
         # Optionally, display the 3D conversation center as text if available
         if conversation_center_3d is not None:
             text = f"3D Center: ({conversation_center_3d[0]:.2f}, {conversation_center_3d[1]:.2f}, {conversation_center_3d[2]:.2f})"
+            # Black shadow before the main white text to improve text readability
             cv2.putText(
                 img,
                 text,
-                (12, 31),
+                (10, 31),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
+                0.35,
                 (0, 0, 0),
                 1,
                 cv2.LINE_AA,
             )
+            # Main text in white color
             cv2.putText(
                 img,
                 text,
-                (10, 30),
+                (8, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
+                0.35,
                 (255, 255, 255),
                 1,
                 cv2.LINE_AA,
