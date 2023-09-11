@@ -49,4 +49,4 @@ rosrun ros_conversation_centroid conversation_centroid_finder.py
 
 ## Video Demo
 
-A video demonstration of this project is available on YouTube. You can watch it [here](https://youtu.be/qk1SVzceGWw).
+A video demonstration of this project is available on YouTube. You can watch it [here](https://youtu.be/_SNKl1Pvg34).
