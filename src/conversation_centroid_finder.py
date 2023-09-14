@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-# Citation:
-# Facebook AI Research (2021). Detectron.
-# Available at: https://github.com/facebookresearch/Detectron (Accessed: 27 June 2023).
+"""
+Citations:
+Facebook AI Research (2021). Detectron.
+Available at: https://github.com/facebookresearch/Detectron (Accessed: 27 June 2023).
+
+Kumar Sambhav 2019. mask-rcnn-coco/mask_rcnn_inception_v2_coco_2018_01_28.pbtxt. [online] Available at: https://github.com/sambhav37/Mask-R-CNN/blob/master/mask-rcnn-coco/mask_rcnn_inception_v2_coco_2018_01_28.pbtxt [29 July 2023]
+"""
 
 import rospy
 import cv2
@@ -12,11 +16,14 @@ from std_msgs.msg import String
 import numpy as np
 import json
 
+
 class ConversationDetectionNode:
     def __init__(self) -> None:
+        # This line lets us know when the node has begun executing
         rospy.init_node("conversation_detection_node")
         rospy.loginfo("Inside __init__")
         # Static
+        # The following values were pre-calculated for the test-cases
         (
             self.color_fx,
             self.color_fy,
@@ -36,11 +43,11 @@ class ConversationDetectionNode:
             423.92333984375,
             233.7213134765625,
         )
+        self.bridge = CvBridge()
+
+        # These values need to be updated to provide the .pb and .pbtxt files for the pretrained model
         pb_file_path = "/home/kausubhd/catkin_ws/src/nav_human_communication/src/scripts/resources/frozen_inference_graph.pb"
         pbtxt_file_path = "/home/kausubhd/catkin_ws/src/nav_human_communication/src/scripts/resources/mask_rcnn_inception_v2_coco_2018_01_28.pbtxt"
-
-        # ROS
-        rospy.loginfo("Node initiated")
 
         self.pub = rospy.Publisher(
             "/custom/nav/human_conversation_detection", String, queue_size=20
@@ -55,20 +62,22 @@ class ConversationDetectionNode:
         )
 
         # Dynamic variables
-        self.bridge = CvBridge()
-        self.tracked_humans = {}  # An object to keep a track of the humanss
-
+        # This net is later used for object detection
         self.net = cv2.dnn.readNetFromTensorflow(pb_file_path, pbtxt_file_path)
-
-        self.humans_data = []
+        self.tracked_humans = {}  # An object to keep a track of the humanss
+        self.humans_data = []  # All humans detected are first appened to this list
         self.full_depth_img = []
+        # A full_depth_img variable which stores the matrix of the depth image to be used at a later point
         self.frame_count = 0
         self.tracker_failure_count = {}
 
-        self.detection_interval = 10  # Run detection every 10 frames
+        # The entry and exit logs help us identify any issues that occur during execution
         rospy.loginfo("Exiting __init__")
 
     def rgb_image_callback(self, msg: Image):
+        """
+        This callback function is executed whenever the rgb image subscriber receives data, i.e an rgb image
+        """
         rospy.loginfo("inside rgb_image_callback")
         try:
             # Process the image and rotate it by 90deg because of camera angle on the robot
@@ -83,6 +92,9 @@ class ConversationDetectionNode:
             rospy.loginfo("Error rgb_img_callback")
 
     def rgb_image_main(self, rgb_image):
+        """
+        This main function will handle the functionalities. It will handle all the function calls
+        """
         rospy.loginfo("inside rgb_image_main")
         try:
             self.helper_rgb_human_detect(
@@ -98,18 +110,18 @@ class ConversationDetectionNode:
                 social_interactions,
                 interacting_human_indices,
             ) = self.helper_detect_social_interactions()
+            # This helper function will handle the interaction detection and return 1) list of strings of interacting humans, and 2) Indices of the interacting humans
+
             (
                 conv_centroid_2d,
                 conv_centroid_3d,
             ) = self.calculate_conversation_centroid_2D_3D(interacting_human_indices)
 
-            self.helper_publish_data(conv_centroid_2d, conv_centroid_3d, social_interactions)
-            # rospy.loginfo(
-            #     f"2d centroid - {conv_centroid_2d} , 3d centroid - {conv_centroid_3d}"
-            # )
-            # rospy.loginfo(
-            #     f"humans data - {self.humans_data} \n tracked_humans data - {self.tracked_humans} \n social_interactions data - {social_interactions} \n interacting_human_indices - {interacting_human_indices}"
-            # )
+            self.helper_publish_data(
+                conv_centroid_2d, conv_centroid_3d, social_interactions
+            )
+
+            # This function is called to display the images. It is solely for testing. It can be commented out during deployment phase.
             self.helper_update_display_images(
                 "RGB Image",
                 rgb_image,
@@ -126,6 +138,7 @@ class ConversationDetectionNode:
 
     def depth_image_callback(self, msg):
         try:
+            # Process the image and rotate it by 90deg because of camera angle on the robot
             depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
             depth_image = cv2.rotate(depth_image, cv2.ROTATE_90_CLOCKWISE)
             self.full_depth_img = depth_image
@@ -133,39 +146,36 @@ class ConversationDetectionNode:
         except:
             rospy.logdebug("Error in depth_image_callback")
 
-    def helper_publish_data(self, conv_centroid_2d, conv_centroid_3d, social_interactions):
+    def helper_publish_data(
+        self, conv_centroid_2d, conv_centroid_3d, social_interactions
+    ):
         try:
-            rospy.loginfo('Inside publish data')
+            rospy.loginfo("Inside publish data")
             data_to_publish = []
 
             # Create a dictionary for each conversation
             conversation_data = {
-                'conversation_centroid_2d': conv_centroid_2d,
-                'conversation_centroid_3d': conv_centroid_3d,
-                'interacting_humans_type_list':social_interactions,
-                'agents_poses': [], 
-                
+                "conversation_centroid_2d": conv_centroid_2d,
+                "conversation_centroid_3d": conv_centroid_3d,
+                "interacting_humans_type_list": social_interactions,
+                "agents_poses": [],
             }
 
-            for idx, human in enumerate(list(
-                self.tracked_humans.items()
-            )):
+            for idx, human in enumerate(list(self.tracked_humans.items())):
                 human = human[1]
                 agent_pose = {
-                    'agent': f'human-{idx}',
-                    'data': {
-                        'bounding_box': human['data']['bounding_box'],
-                        'body_angle_x': human['data']['body_angle_x'],
-                        'body_angle_y': human['data']['body_angle_y'],
-                        'centroid_2d': human['data']['centroid_2d'],
-                        'centroid_3d': human['data']['centroid_3d'].tolist()
-                    }
+                    "agent": f"human-{idx}",
+                    "data": {
+                        "bounding_box": human["data"]["bounding_box"],
+                        "body_angle_x": human["data"]["body_angle_x"],
+                        "body_angle_y": human["data"]["body_angle_y"],
+                        "centroid_2d": human["data"]["centroid_2d"],
+                        "centroid_3d": human["data"]["centroid_3d"].tolist(),
+                    },
                 }
-                conversation_data['agents_poses'].append(agent_pose)
-            
+                conversation_data["agents_poses"].append(agent_pose)
 
-
-            data_to_publish.append({'conversation_data_0':conversation_data})
+            data_to_publish.append({"conversation_data_0": conversation_data})
 
             json_string = json.dumps(data_to_publish)
 
@@ -178,11 +188,15 @@ class ConversationDetectionNode:
         except:
             rospy.logdebug(traceback.print_exc())
             rospy.loginfo("Error in publish data")
-        
+
     def helper_rgb_human_detect(self, img):
+        """
+        Responsible for detecting objects
+        """
         rospy.loginfo("Starting helper_rgb_human_detect")
         height, width, _ = img.shape
 
+        # We first provide the rgb image blob to the net, and it then provides us the masks, and bounding boxes
         self.net.setInput(
             cv2.dnn.blobFromImage(img, size=(300, 300), swapRB=True, crop=False)
         )
@@ -335,8 +349,8 @@ class ConversationDetectionNode:
 
                 h1_centroid_3d = self.compute_3d_centroid(h1_centroid_2d)
                 h2_centroid_3d = self.compute_3d_centroid(h2_centroid_2d)
-                self.tracked_humans[i]['data']['centroid_3d'] = h1_centroid_3d
-                self.tracked_humans[j]['data']['centroid_3d'] = h2_centroid_3d
+                self.tracked_humans[i]["data"]["centroid_3d"] = h1_centroid_3d
+                self.tracked_humans[j]["data"]["centroid_3d"] = h2_centroid_3d
                 h1_angle_x = np.radians(human1["data"]["body_angle_x"])
                 h1_angle_y = np.radians(human1["data"]["body_angle_y"])
                 h2_angle_x = np.radians(human2["data"]["body_angle_x"])
@@ -380,6 +394,7 @@ class ConversationDetectionNode:
                     "Side-by-side": angle_diff < 10 and (0.5 < real_distance < 3.8),
                 }
 
+                # This priority list is for testing purposes and can be edited for future use.
                 priority = [
                     "N-shape",
                     "Vis-a-vis",
@@ -413,17 +428,6 @@ class ConversationDetectionNode:
         conversation_center_2d=None,
         conversation_center_3d=None,
     ):
-        for idx, tracked_human in enumerate(self.humans_data):
-            x, y, w, h = tracked_human["bounding_box"]
-            if idx in interacting_human_indices:
-                cv2.rectangle(
-                    img, (x, y), (x + w, y + h), (0, 0, 255), 2
-                )  # Yellow color for interacting humans
-            else:
-                cv2.rectangle(
-                    img, (x, y), (x + w, y + h), (255, 0, 0), 2
-                )  # Green color for non-interacting humans
-
         for idx, tracked_human in list(self.tracked_humans.items()):
             x, y, w, h = tracked_human["data"]["bounding_box"]
             # contours = tracked_human['data']['contours']
@@ -436,18 +440,15 @@ class ConversationDetectionNode:
                 cv2.rectangle(
                     img, (x, y), (x + w, y + h), (0, 255, 255), 2
                 )  # Yellow color for non-interacting humans
-            
 
-        # Draw the 2D conversation center if available
+        #  This condition will let us draw the 2D conversation center if available
         if conversation_center_2d is not None:
             center_x_2d, center_y_2d = [int(coord) for coord in conversation_center_2d]
             cv2.circle(
                 img, (center_x_2d, center_y_2d), 10, (255, 255, 255), -1
             )  # White circle
-            # cv2.putText(img, '2D Center', (center_x_2d + 12, center_y_2d + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-            # cv2.putText(img, '2D Center', (center_x_2d + 10, center_y_2d), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
-        # Optionally, display the 3D conversation center as text if available
+        # Similarly, we can display the 3D conversation center as text if available
         if conversation_center_3d is not None:
             text = f"3D Center: ({conversation_center_3d[0]:.2f}, {conversation_center_3d[1]:.2f}, {conversation_center_3d[2]:.2f})"
             # Black shadow before the main white text to improve text readability
@@ -489,17 +490,6 @@ class ConversationDetectionNode:
     def calculate_conversation_centroid_2D_3D(self, interacting_human_indices):
         """
         Calculate the 2D and 3D centroid of a conversation based on the tracked humans and their interactions.
-        Parameters:
-
-        - tracked_humans: dictionary containing tracking and human data
-
-        - interacting_human_indices: set containing indices of humans who are interacting
-
-        - depth_data: 2D array containing depth data
-
-        - depth_fx, depth_fy, depth_cx, depth_cy: camera intrinsic parameters for depth data
-        Returns:
-        - 2D and 3D centroid of the conversation
         """
         rospy.loginfo("entered calculate_conversation_centroid_2D_3D")
         total_x_2d = 0
