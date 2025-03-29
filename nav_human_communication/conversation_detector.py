@@ -45,8 +45,63 @@ class ConversationDetector(Node):
         social_interactions = self.detect_conversation(self.tracked_humans)
         self.get_logger().info("Printing social interaction")
         self.get_logger().info(str(social_interactions))
-        # self.get_logger().info(str(interacting_human_indices))
+            # Calculate centroids of conversation groups
+        centroids = self.calculate_conversation_centroids(social_interactions, self.tracked_humans)
+        self.get_logger().info("Conversation group centroids:")
+        self.get_logger().info(str(centroids))
 
+        # Annotate the image with conversation data
+        for group in centroids.get("conversations", []):
+            group_id = group["group"]
+            centroid = group.get("centroid")
+            if centroid:
+                cv2.circle(rgb_img, (int(centroid[0]), int(centroid[1])), 10, (0, 255, 0), -1)
+                cv2.putText(rgb_img, f"Group {group_id}", (int(centroid[0]), int(centroid[1] - 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # Publish the annotated image
+        annotated_image = self.bridge.cv2_to_imgmsg(rgb_img, encoding="bgr8")
+        annotated_image.header.stamp = img_raw.header.stamp
+        annotated_image.header.frame_id = img_raw.header.frame_id
+        # self.image_publisher.publish(annotated_image)
+        self.get_logger().info("Annotated image published")
+        cv2.imshow("Annotated Image", rgb_img)
+        cv2.waitKey(1)
+
+
+    def calculate_conversation_centroids(self, conversations, tracked_humans):
+        """
+        Calculate the centroid of each conversation group based on the 3D positions of participants.
+        
+        Args:
+            conversations (dict): The conversation groups with participant IDs.
+            tracked_humans (dict): The tracked humans' data with 3D positions.
+
+        Returns:
+            dict: A dictionary with group IDs as keys and their centroids as values.
+        """
+        centroids = {}
+
+        for group in conversations.get("conversations", []):
+            group_id = group["group"]
+            participants = group["participants"]
+
+            # Collect valid 3D positions of participants
+            positions = []
+            for participant_id in participants:
+                human = tracked_humans.get(participant_id, {})
+                for key in ["3d_body", "3d_legs", "3d_head"]:
+                    position = human.get(key)
+                    if position and not np.isinf(position[2]):  # Ensure valid depth
+                        positions.append(position)
+                        break
+
+            # Calculate the centroid if there are valid positions
+            if positions:
+                centroid = np.mean(positions, axis=0)
+                group['centroid'] = tuple(centroid)
+
+        return conversations
+    
     def calculate_3d_positions(self, human, depth_image):
         positions = {
             "2d_pose": [],
@@ -86,7 +141,7 @@ class ConversationDetector(Node):
         def calculate_average_3d(indices_list):
             valid_points = []
             for i in indices_list:
-                if i < len(points) and points[i, 2] > 0.2:  # Confidence check
+                if i < len(points) and points[i, 2] > 0.2: 
                     x, y = int(points[i, 0]), int(points[i, 1])
                     z = get_depth(x, y)
                     if z is not None:
@@ -117,8 +172,8 @@ class ConversationDetector(Node):
         self.depth_img = depth_img
         self.get_logger().info("got depth img")
 
-        cv2.imshow("depth_img",depth_img)
-        cv2.waitKey(1)
+        # cv2.imshow("depth_img",depth_img)
+        # cv2.waitKey(1)
 
     def helper_rgb_human_detect(self, frame):
 
@@ -128,7 +183,7 @@ class ConversationDetector(Node):
             for connection in skeleton:
                 try:
                     if (keypoints[connection[0]][2] > 0.3 and 
-                        keypoints[connection[1]][2] > 0.3):  # Confidence threshold for connections
+                        keypoints[connection[1]][2] > 0.3):  
                         pt1 = (int(keypoints[connection[0]][0]), int(keypoints[connection[0]][1]))
                         pt2 = (int(keypoints[connection[1]][0]), int(keypoints[connection[1]][1]))
                         cv2.line(frame, pt1, pt2, (255, 0, 0), 2)
@@ -155,6 +210,8 @@ class ConversationDetector(Node):
 
                 
                 cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                # cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                # cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 0), 2)
                 
                 
                 label = f"Human: {conf:.2f}"
@@ -181,8 +238,8 @@ class ConversationDetector(Node):
                     'pose': filtered_keypoints
                 }
 
-        cv2.imshow("Human Detection with Poses", display_frame)
-        cv2.waitKey(1)
+        # cv2.imshow("Human Detection with Poses", display_frame)
+        # cv2.waitKey(1)
 
         return tracked_humans
 
