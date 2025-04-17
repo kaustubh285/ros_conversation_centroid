@@ -9,7 +9,10 @@ import supervision as sv
 import numpy as np
 import cv2
 import json
-
+import random
+# from std_msgs.msg import String  
+# from geometry_msgs.msg import PoseWithCovariance  
+# from nav_human_communication.msg import Group 
 
 class ConversationDetector(Node):
     
@@ -21,14 +24,39 @@ class ConversationDetector(Node):
         self.tracked_humans = {}
         self.depth_img = None
         self.pose_model = YOLO('yolov8n-pose.pt')
-
         self.tracker = sv.ByteTrack()
         self.bridge = CvBridge()
+        self.all_social_interactions = None
+        self.group_colors = [(random.randint(0,255),random.randint(0,255),random.randint(0,255)) for _ in range(10)]
         self.rgb_image_raw = self.create_subscription(Image, "/intel_realsense_r200_depth/image_raw", self.rgb_image_callback,10)
         self.depth_image_raw = self.create_subscription(Image, "/intel_realsense_r200_depth/depth/image_raw",self.depth_image_callback,10)
-        
+        self.flagged_humans = set()  
+        # self.group_publisher = self.create_publisher(json, "/group_data", 10)
+
     
-    def rgb_image_callback(self,img_raw:Image):
+    # def convert_to_group_msg(self, social_interaction):
+    #     try:
+    #         # for group in social_interaction.get("conversations", []):
+    #         #     group_msg = Group()
+    #         #     group_msg.group_id = group["group"]
+    #         #     group_msg.age = rclpy.duration.Duration(seconds=0) 
+
+    #         #     centroid = group.get("centroid", [0.0, 0.0, 0.0])
+    #         #     group_msg.centerOfGravity.pose.position.x = centroid[0]
+    #         #     group_msg.centerOfGravity.pose.position.y = centroid[1]
+    #         #     group_msg.centerOfGravity.pose.position.z = centroid[2]
+
+    #         #     group_msg.track_ids = group.get("participants", [])
+
+    #         #     self.group_publisher.publish(group_msg)
+    #         #     self.get_logger().info(f"Published group data for group_id: {group_msg.group_id}")
+
+    #         self.group_publisher.publish(social_interaction)
+    #         self.get_logger().info("Published group data successfully")
+    #     except Exception as e:
+    #         self.get_logger().error(f"Failed to convert and publish group data: {e}")
+
+    def rgb_image_callback(self, img_raw: Image):
         self.get_logger().info("got rgb raw image!!!!")
         rgb_img = self.bridge.imgmsg_to_cv2(img_raw,desired_encoding="bgr8")
         self.tracked_humans = self.helper_rgb_human_detect(rgb_img)
@@ -41,23 +69,25 @@ class ConversationDetector(Node):
             except Exception as e:
                 self.get_logger().info('Error for '+str(human_id)+'||'+str(e))
         self.get_logger().info(str(self.tracked_humans))
-
-        social_interactions = self.detect_conversation(self.tracked_humans)
+        new_social_interaction = self.detect_conversation(self.tracked_humans)
         self.get_logger().info("Printing social interaction")
-        self.get_logger().info(str(social_interactions))
+        self.get_logger().info(str(self.all_social_interactions))
             # Calculate centroids of conversation groups
-        centroids = self.calculate_conversation_centroids(social_interactions, self.tracked_humans)
+        self.all_social_interactions = self.calculate_conversation_centroids(self.all_social_interactions, new_social_interaction, self.tracked_humans)
         self.get_logger().info("Conversation group centroids:")
-        self.get_logger().info(str(centroids))
+        self.get_logger().info(str(new_social_interaction))
+        # self.convert_to_group_msg(new_social_interaction)  
 
+        self.draw_conversation_circle(rgb_img, new_social_interaction, self.tracked_humans)
         # Annotate the image with conversation data
-        for group in centroids.get("conversations", []):
+        for group in new_social_interaction.get("conversations", []):
             group_id = group["group"]
             centroid = group.get("centroid")
             if centroid:
                 cv2.circle(rgb_img, (int(centroid[0]), int(centroid[1])), 10, (0, 255, 0), -1)
                 cv2.putText(rgb_img, f"Group {group_id}", (int(centroid[0]), int(centroid[1] - 10)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
         # Publish the annotated image
         annotated_image = self.bridge.cv2_to_imgmsg(rgb_img, encoding="bgr8")
         annotated_image.header.stamp = img_raw.header.stamp
@@ -67,19 +97,46 @@ class ConversationDetector(Node):
         cv2.imshow("Annotated Image", rgb_img)
         cv2.waitKey(1)
 
-
-    def calculate_conversation_centroids(self, conversations, tracked_humans):
+    def draw_conversation_circle(self,rgb_img, centroids, tracked_humans):
         """
-        Calculate the centroid of each conversation group based on the 3D positions of participants.
-        
+        Draw a top-view circle around the conversation group on the image.
+
         Args:
-            conversations (dict): The conversation groups with participant IDs.
+            rgb_img (numpy.ndarray): The RGB image to annotate.
+            centroids (dict): The centroids of conversation groups.
             tracked_humans (dict): The tracked humans' data with 3D positions.
-
-        Returns:
-            dict: A dictionary with group IDs as keys and their centroids as values.
         """
-        centroids = {}
+        for group in centroids.get("conversations", []):
+            group_id = group["group"]
+            centroid = group.get("centroid")
+            participants = group["participants"]
+
+            if centroid:
+                # Calculate the radius as the farthest human from the centroid
+                max_distance = 0
+                for participant_id in participants:
+                    human = tracked_humans.get(participant_id, {})
+                    for key in ["3d_body", "3d_legs", "3d_head"]:
+                        position = human.get(key)
+                        if position and not np.isinf(position[2]):  # Ensure valid depth
+                            distance = np.linalg.norm(np.array(position[:2]) - np.array(centroid[:2]))
+                            max_distance = max(max_distance, distance)
+
+                # Draw the circle on the image
+                # cv2.ellipse(rgb_img, (int(centroid[0]), int(centroid[1])), int(max_distance), (255, 0, 0), 2)
+                cv2.ellipse(
+                    rgb_img,
+                    center=(int(centroid[0]), int(centroid[1])),
+                    axes=(int(max_distance), int(0.35 * max_distance)),
+                    angle=0.0,
+                    startAngle=-45,
+                    endAngle=235,
+                    color=self.group_colors[group_id % len(self.group_colors)],
+                    thickness=2,
+                    lineType=cv2.LINE_4,
+                )
+
+    def calculate_conversation_centroids(self, all_conversation, conversations, tracked_humans):
 
         for group in conversations.get("conversations", []):
             group_id = group["group"]
@@ -97,8 +154,17 @@ class ConversationDetector(Node):
 
             # Calculate the centroid if there are valid positions
             if positions:
-                centroid = np.mean(positions, axis=0)
-                group['centroid'] = tuple(centroid)
+                new_centroid = np.mean(positions, axis=0)
+                if all_conversation:
+                    # Retrieve historical centroid if available
+                    historical_centroid = next(
+                        (conv.get("centroid") for conv in all_conversation.get("conversations", []) if conv["group"] == group_id),
+                        None
+                    )
+                    if historical_centroid:
+                        # Weighted average: 65% new data, 35% historical data
+                        new_centroid = 0.65 * np.array(new_centroid) + 0.35 * np.array(historical_centroid)
+                group['centroid'] = tuple(new_centroid)
 
         return conversations
     
@@ -245,10 +311,6 @@ class ConversationDetector(Node):
 
    
     def detect_conversation(self, humans, depth_threshold=1.0, bbox_distance_threshold=100):
-        """
-        Detects potential human conversations and groups participants based on bounding box proximity,
-        depth similarity, and facing direction.
-        """
         conversations = {"conversations": []}
         human_ids = list(humans.keys())
 
@@ -259,13 +321,12 @@ class ConversationDetector(Node):
         assigned = set()
 
         def bounding_boxes_close(bbox1, bbox2):
-            """Check if bounding box centroids are within a given threshold distance."""
+            
             x1_center, y1_center = (bbox1[0] + bbox1[2]) / 2, (bbox1[1] + bbox1[3]) / 2
             x2_center, y2_center = (bbox2[0] + bbox2[2]) / 2, (bbox2[1] + bbox2[3]) / 2
             return np.linalg.norm([x1_center - x2_center, y1_center - y2_center]) < bbox_distance_threshold
 
         def depth_similar(human1, human2):
-            """Check if the depth values of two humans are within a threshold."""
             depths1 = [human1.get("3d_head", (0, 0, np.inf))[2], 
                     human1.get("3d_body", (0, 0, np.inf))[2], 
                     human1.get("3d_legs", (0, 0, np.inf))[2]]
@@ -281,6 +342,12 @@ class ConversationDetector(Node):
 
             return any(abs(d1 - d2) <= depth_threshold for d1 in valid_depths1 for d2 in valid_depths2)
 
+        if self.all_social_interactions:
+            for group in self.all_social_interactions.get("conversations", []):
+                for participant in group["participants"]:
+                    if participant not in human_ids:
+                        self.flagged_humans.add(participant)
+
         for i in range(len(human_ids)):
             for j in range(i + 1, len(human_ids)):
                 human1 = humans[human_ids[i]]
@@ -294,19 +361,48 @@ class ConversationDetector(Node):
 
                     if conversation_type != "No interaction":
                         group_found = False
-
-                        # Check if these humans are already in a group
                         for group in groups:
                             if human_ids[i] in group["participants"] or human_ids[j] in group["participants"]:
                                 group["participants"].update([human_ids[i], human_ids[j]])
                                 group_found = True
                                 break
                         
-                        # If they are not in an existing group, create a new group
                         if not group_found:
                             groups.append({"group": len(groups) + 1, "participants": {human_ids[i], human_ids[j]}})
                         
                         assigned.update([human_ids[i], human_ids[j]])
+
+        
+        if self.flagged_humans:
+            for flagged_human in list(self.flagged_humans):
+                for human_id in human_ids:
+                    if flagged_human != human_id:
+                        human1 = humans.get(flagged_human, {})
+                        human2 = humans[human_id]
+
+                        bbox1 = human1.get("bbox", (0, 0, 0, 0))
+                        bbox2 = human2.get("bbox", (0, 0, 0, 0))
+
+                        if bounding_boxes_close(bbox1, bbox2) and depth_similar(human1, human2):
+                            conversation_type = self.are_facing_each_other(human1, human2)
+
+                            if conversation_type != "No interaction":
+                                group_found = False
+
+                                # Check if these humans are already in a group
+                                for group in groups:
+                                    if flagged_human in group["participants"] or human_id in group["participants"]:
+                                        group["participants"].update([flagged_human, human_id])
+                                        group_found = True
+                                        break
+                                
+                                # If they are not in an existing group, create a new group
+                                if not group_found:
+                                    groups.append({"group": len(groups) + 1, "participants": {flagged_human, human_id}})
+                                
+                                assigned.update([flagged_human, human_id])
+                                self.flagged_humans.remove(flagged_human)
+                                break
 
         # Convert sets to lists for JSON compatibility
         for group in groups:
@@ -317,15 +413,10 @@ class ConversationDetector(Node):
 
 
     def calculate_facing_direction(self, human):
-        """
-        Calculate a normalized 3D facing vector using the nose and shoulders.
-        If the nose (3d_head) depth is invalid (inf), it falls back to the body depth.
-        """
         keypoints = human.get('pose', [])
         if not keypoints:
             return None
 
-        # Define indices for keypoints (assumes YOLO-pose ordering)
         NOSE = 0
         LEFT_SHOULDER = 5
         RIGHT_SHOULDER = 6
@@ -333,26 +424,21 @@ class ConversationDetector(Node):
         if len(keypoints) <= max(NOSE, LEFT_SHOULDER, RIGHT_SHOULDER):
             return None
 
-        # Extract 2D positions from the pose keypoints
         nose_2d = keypoints[NOSE][:2]
         left_shoulder_2d = keypoints[LEFT_SHOULDER][:2]
         right_shoulder_2d = keypoints[RIGHT_SHOULDER][:2]
 
-        # Retrieve depth values
         nose_depth = human.get("3d_head", (0, 0, None))[2]
-        # If nose depth is invalid, use body depth as backup
         if nose_depth is None or np.isinf(nose_depth):
             nose_depth = human.get("3d_body", (0, 0, None))[2]
 
         left_shoulder_depth = human.get("3d_body", (0, 0, None))[2]
         right_shoulder_depth = human.get("3d_body", (0, 0, None))[2]
 
-        # If any critical value is missing, we cannot compute the vector
         if (nose_depth is None or left_shoulder_depth is None or 
             np.isinf(nose_depth) or np.isinf(left_shoulder_depth)):
             return None
 
-        # Form 3D points (using body depth for shoulders)
         nose_3d = np.array([nose_2d[0], nose_2d[1], nose_depth])
         shoulder_center = np.array([
             (left_shoulder_2d[0] + right_shoulder_2d[0]) / 2,
@@ -360,7 +446,6 @@ class ConversationDetector(Node):
             (left_shoulder_depth + right_shoulder_depth) / 2
         ])
 
-        # Compute facing vector: from shoulder center to nose
         facing_vector = nose_3d - shoulder_center
         norm = np.linalg.norm(facing_vector)
         return facing_vector / norm if norm > 0 else None
@@ -368,13 +453,11 @@ class ConversationDetector(Node):
     
 
     def are_facing_each_other(self, human1, human2):
-        """Determine interaction type based on facing direction and 2D head distance (in pixels)."""
 
         def compute_2d_distance(point1, point2):
             return np.linalg.norm(np.array(point1) - np.array(point2))
         
         def get_best_point(human):
-            """Selects the best available 3D point (prefer body > legs > head) to avoid inf depth issues."""
             for key in ["3d_body", "3d_legs", "3d_head"]:
                 point = human.get(key, None)
                 if point is not None and not np.isinf(point[2]):
@@ -398,8 +481,7 @@ class ConversationDetector(Node):
         dot_product = np.dot(facing1, facing2)
         angle_diff = np.degrees(np.arccos(np.clip(dot_product, -1.0, 1.0)))
         
-        # Update ideal thresholds to pixel units
-        # (These values are examples—adjust based on your camera and scene)
+        # thresholds 
         shape_definitions = {
             "N-shape": (30, 50),        # ideal angle 30°, ideal head distance 50 px
             "Vis-a-vis": (150, 50),      # ideal angle 150°, ideal head distance 50 px
@@ -416,10 +498,9 @@ class ConversationDetector(Node):
             distance_score = 1 - (abs(ideal_distance - head_distance) / ideal_distance)
             shape_scores[shape] = angle_score * 0.6 + distance_score * 0.4
         
-        # Debug prints (remove in production)
-        print("[DEBUG] angle_diff:", angle_diff)
-        print("[DEBUG] head_distance:", head_distance)
-        print("[DEBUG] shape scores:", shape_scores)
+        self.get_logger().info(f"[DEBUG] angle_diff: {angle_diff}")
+        self.get_logger().info(f"[DEBUG] head_distance: {head_distance}")
+        self.get_logger().info(f"[DEBUG] shape scores: {shape_scores}")
         
         best_shape = max(shape_scores, key=shape_scores.get)
         return best_shape if shape_scores[best_shape] > 0.5 else "No interaction"
