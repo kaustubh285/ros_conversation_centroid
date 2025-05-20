@@ -1,0 +1,2 @@
+find_package(msgs_nav_conversation REQUIRED)
+ament_target_dependencies(${PROJECT_NAME} msgs_nav_conversation)

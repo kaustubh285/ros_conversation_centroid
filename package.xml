@@ -14,6 +14,7 @@
   <depend>torch</depend>
   <depend>visualization_msgs</depend>
   <depend>torchvision</depend>
+  <depend>msgs_nav_conversation</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

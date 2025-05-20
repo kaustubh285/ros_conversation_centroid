@@ -10,9 +10,15 @@ import numpy as np
 import cv2
 import json
 import random
-# from std_msgs.msg import String  
-# from geometry_msgs.msg import PoseWithCovariance  
-# from nav_human_communication.msg import Group 
+from msgs_nav_conversation.msg import (
+    GroupMessage,
+    CentroidInfo,
+    Conversation,
+    AgentInfo,
+    Pose3D,
+    Point2D,
+    Point3D,
+)
 
 class ConversationDetector(Node):
     
@@ -32,7 +38,7 @@ class ConversationDetector(Node):
         self.depth_image_raw = self.create_subscription(Image, "/intel_realsense_r200_depth/depth/image_raw",self.depth_image_callback,10)
         self.flagged_humans = set()  
         # self.group_publisher = self.create_publisher(json, "/group_data", 10)
-
+        self.group_publisher = self.create_publisher(GroupMessage, "/group_data", 10)
     
     # def convert_to_group_msg(self, social_interaction):
     #     try:
@@ -78,6 +84,9 @@ class ConversationDetector(Node):
         self.get_logger().info(str(new_social_interaction))
         # self.convert_to_group_msg(new_social_interaction)  
 
+        msg = self.convert_to_group_message(new_social_interaction, self.tracked_humans)
+        self.group_publisher.publish(msg)
+
         self.draw_conversation_circle(rgb_img, new_social_interaction, self.tracked_humans)
         # Annotate the image with conversation data
         for group in new_social_interaction.get("conversations", []):
@@ -96,6 +105,45 @@ class ConversationDetector(Node):
         self.get_logger().info("Annotated image published")
         cv2.imshow("Annotated Image", rgb_img)
         cv2.waitKey(1)
+
+    def convert_to_group_message(self, new_social_interaction, tracked_humans):
+        group_msg = GroupMessage()
+        centroid_info = CentroidInfo()
+        centroid_info.conversations = []
+        agent_info_list = []
+
+        for group in new_social_interaction.get("conversations", []):
+            conv = Conversation()
+            conv.group = group["group"]
+            conv.participants = group["participants"]
+            if "centroid" in group and group["centroid"]:
+                conv.centroid = list(map(float, group["centroid"]))
+            centroid_info.conversations.append(conv)
+
+        for agent_id, agent in tracked_humans.items():
+            agent_msg = AgentInfo()
+            agent_msg.id = int(agent_id)
+            agent_msg.bbox = [int(x) for x in agent.get("bbox", [0,0,0,0])]
+            agent_msg.confidence = float(agent.get("confidence", 0.0))
+            # 2D pose
+            # agent_msg.pose_2d = [Point2D(x=float(x), y=float(y)) for x, y in agent.get("2d_pose", [])]
+            # 3D pose (if you want to fill Pose3D array)
+            # agent_msg.pose = [Pose3D(x=float(x), y=float(y), confidence=float(conf)) for x, y, conf in agent.get("pose", [])]
+            # 3D points
+            for key in ["head_3d", "body_3d", "legs_3d"]:
+                if key == "head_3d":
+                    val = agent.get("3d_head")
+                elif key == "body_3d":
+                    val = agent.get("3d_body")
+                elif key == "legs_3d":
+                    val = agent.get("3d_legs")
+                if val:
+                    setattr(agent_msg, key, Point3D(x=float(val[0]), y=float(val[1]), z=float(val[2])))
+            agent_info_list.append(agent_msg)
+
+        group_msg.centroid_info = centroid_info
+        group_msg.agents_info = agent_info_list
+        return group_msg
 
     def draw_conversation_circle(self,rgb_img, centroids, tracked_humans):
         """
