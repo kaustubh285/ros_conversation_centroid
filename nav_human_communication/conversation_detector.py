@@ -35,8 +35,8 @@ class ConversationDetector(Node):
         self.bridge = CvBridge()
         self.all_social_interactions = None
         self.group_colors = [(random.randint(0,255),random.randint(0,255),random.randint(0,255)) for _ in range(10)]
-        self.rgb_image_raw = self.create_subscription(Image, "/intel_realsense_r200_depth/image_raw", self.rgb_image_callback,10)
-        self.depth_image_raw = self.create_subscription(Image, "/intel_realsense_r200_depth/depth/image_raw",self.depth_image_callback,10)
+        self.rgb_image_raw = self.create_subscription(Image, "/camera/camera/color/image_raw", self.rgb_image_callback,10)
+        self.depth_image_raw = self.create_subscription(Image, "/camera/camera/depth/image_rect_raw",self.depth_image_callback,10)
         self.flagged_humans = set()  
         # self.group_publisher = self.create_publisher(json, "/group_data", 10)
         self.group_publisher = self.create_publisher(GroupMessage, "/group_data", 10)
@@ -283,7 +283,7 @@ class ConversationDetector(Node):
 
         for result in results:
             boxes = result.boxes
-            keypoints = result.keypoints
+            keypoints = result.keypoints.cpu()
 
             # Ensure tensors are moved to CPU before converting to NumPy
             boxes = boxes.cpu().numpy() if isinstance(boxes, torch.Tensor) else boxes
@@ -364,6 +364,12 @@ class ConversationDetector(Node):
 
                 bbox1 = human1.get("bbox", (0, 0, 0, 0))
                 bbox2 = human2.get("bbox", (0, 0, 0, 0))
+
+                self.get_logger().info(f"bbox1: {bbox1}, bbox2: {bbox2}")
+                self.get_logger().info(f"depth1: {human1.get('3d_head', (0, 0, np.inf))[2]}, depth2: {human2.get('3d_head', (0, 0, np.inf))[2]}")
+                self.get_logger().info(f"depth1: {human1.get('3d_body', (0, 0, np.inf))[2]}, depth2: {human2.get('3d_body', (0, 0, np.inf))[2]}")
+                self.get_logger().info(f"depth1: {human1.get('3d_legs', (0, 0, np.inf))[2]}, depth2: {human2.get('3d_legs', (0, 0, np.inf))[2]}")
+                self.get_logger().info(f"human1: {human1}, human2: {human2}")
 
                 if bounding_boxes_close(bbox1, bbox2) and depth_similar(human1, human2):
                     conversation_type = self.are_facing_each_other(human1, human2)
