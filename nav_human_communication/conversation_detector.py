@@ -19,6 +19,7 @@ from msgs_nav_conversation.msg import (
     Point2D,
     Point3D,
 )
+import torch
 
 class ConversationDetector(Node):
     
@@ -260,7 +261,6 @@ class ConversationDetector(Node):
         # cv2.waitKey(1)
 
     def helper_rgb_human_detect(self, frame):
-
         def draw_skeleton(frame, keypoints):
             skeleton = [[6, 8], [8, 10], [5, 7], [7, 9], 
                         [6, 12], [5, 11], [12, 14], [11, 13], [14, 16], [13, 15]]
@@ -275,40 +275,33 @@ class ConversationDetector(Node):
                     self.get_logger().warn("Invalid keypoints detected.")
                     continue
 
-        
         results = self.pose_model.predict(frame, conf=0.5, verbose=False)
-        
         display_frame = frame.copy()
         tracked_humans = {}
 
         for result in results:
-            
             boxes = result.boxes
             keypoints = result.keypoints
 
+            # Ensure tensors are moved to CPU before converting to NumPy
+            boxes = boxes.cpu().numpy() if isinstance(boxes, torch.Tensor) else boxes
+            keypoints = keypoints.cpu().numpy() if isinstance(keypoints, torch.Tensor) else keypoints
+
             for box, kp in zip(boxes, keypoints):
-                
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 cls = int(box.cls[0])
                 conf = float(box.conf[0])
 
-                
                 cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                # cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                # cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 0), 2)
-                
-                
                 label = f"Human: {conf:.2f}"
                 label_pos = (x1, y1 - 10 if y1 > 20 else y1 + 10)
                 cv2.putText(display_frame, label, label_pos,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
-                
                 filtered_keypoints = []
                 for x, y, k_conf in kp.data[0]:
                     if k_conf > 0.2:  
                         x, y = int(x), int(y)
-                        
                         if x1 <= x <= x2 and y1 <= y <= y2:
                             filtered_keypoints.append((x, y, k_conf))
                             cv2.circle(display_frame, (x, y), 4, (0, 255, 0), -1)
@@ -322,11 +315,7 @@ class ConversationDetector(Node):
                     'pose': filtered_keypoints
                 }
 
-        # cv2.imshow("Human Detection with Poses", display_frame)
-        # cv2.waitKey(1)
-
         return tracked_humans
-
    
     def detect_conversation(self, humans, depth_threshold=1.0, bbox_distance_threshold=100):
         conversations = {"conversations": []}
