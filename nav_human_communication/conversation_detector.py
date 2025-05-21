@@ -44,6 +44,8 @@ class ConversationDetector(Node):
     def rgb_image_callback(self, img_raw: Image):
         self.get_logger().info("got rgb raw image!!!!")
         rgb_img = self.bridge.imgmsg_to_cv2(img_raw,desired_encoding="bgr8")
+        rgb_img = cv2.GaussianBlur(rgb_img, (5, 5), 0)  # Reduce noise
+        rgb_img = cv2.cvtColor(rgb_img, cv2.COLOR_BGR2RGB)  # Ensure correct color format
         self.tracked_humans = self.helper_rgb_human_detect(rgb_img)
 
         for human_id, human_data in self.tracked_humans.items():
