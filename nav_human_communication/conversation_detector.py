@@ -40,28 +40,6 @@ class ConversationDetector(Node):
         # self.group_publisher = self.create_publisher(json, "/group_data", 10)
         self.group_publisher = self.create_publisher(GroupMessage, "/group_data", 10)
     
-    # def convert_to_group_msg(self, social_interaction):
-    #     try:
-    #         # for group in social_interaction.get("conversations", []):
-    #         #     group_msg = Group()
-    #         #     group_msg.group_id = group["group"]
-    #         #     group_msg.age = rclpy.duration.Duration(seconds=0) 
-
-    #         #     centroid = group.get("centroid", [0.0, 0.0, 0.0])
-    #         #     group_msg.centerOfGravity.pose.position.x = centroid[0]
-    #         #     group_msg.centerOfGravity.pose.position.y = centroid[1]
-    #         #     group_msg.centerOfGravity.pose.position.z = centroid[2]
-
-    #         #     group_msg.track_ids = group.get("participants", [])
-
-    #         #     self.group_publisher.publish(group_msg)
-    #         #     self.get_logger().info(f"Published group data for group_id: {group_msg.group_id}")
-
-    #         self.group_publisher.publish(social_interaction)
-    #         self.get_logger().info("Published group data successfully")
-    #     except Exception as e:
-    #         self.get_logger().error(f"Failed to convert and publish group data: {e}")
-
     def rgb_image_callback(self, img_raw: Image):
         self.get_logger().info("got rgb raw image!!!!")
         rgb_img = self.bridge.imgmsg_to_cv2(img_raw,desired_encoding="bgr8")
@@ -88,7 +66,7 @@ class ConversationDetector(Node):
         self.group_publisher.publish(msg)
 
         self.draw_conversation_circle(rgb_img, new_social_interaction, self.tracked_humans)
-        # Annotate the image with conversation data
+        
         for group in new_social_interaction.get("conversations", []):
             group_id = group["group"]
             centroid = group.get("centroid")
@@ -97,7 +75,7 @@ class ConversationDetector(Node):
                 cv2.putText(rgb_img, f"Group {group_id}", (int(centroid[0]), int(centroid[1] - 10)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
-        # Publish the annotated image
+        
         annotated_image = self.bridge.cv2_to_imgmsg(rgb_img, encoding="bgr8")
         annotated_image.header.stamp = img_raw.header.stamp
         annotated_image.header.frame_id = img_raw.header.frame_id
@@ -146,14 +124,6 @@ class ConversationDetector(Node):
         return group_msg
 
     def draw_conversation_circle(self,rgb_img, centroids, tracked_humans):
-        """
-        Draw a top-view circle around the conversation group on the image.
-
-        Args:
-            rgb_img (numpy.ndarray): The RGB image to annotate.
-            centroids (dict): The centroids of conversation groups.
-            tracked_humans (dict): The tracked humans' data with 3D positions.
-        """
         for group in centroids.get("conversations", []):
             group_id = group["group"]
             centroid = group.get("centroid")
@@ -200,11 +170,11 @@ class ConversationDetector(Node):
                         positions.append(position)
                         break
 
-            # Calculate the centroid if there are valid positions
+            
             if positions:
                 new_centroid = np.mean(positions, axis=0)
                 if all_conversation:
-                    # Retrieve historical centroid if available
+                    
                     historical_centroid = next(
                         (conv.get("centroid") for conv in all_conversation.get("conversations", []) if conv["group"] == group_id),
                         None
@@ -437,14 +407,12 @@ class ConversationDetector(Node):
                             if conversation_type != "No interaction":
                                 group_found = False
 
-                                # Check if these humans are already in a group
                                 for group in groups:
                                     if flagged_human in group["participants"] or human_id in group["participants"]:
                                         group["participants"].update([flagged_human, human_id])
                                         group_found = True
                                         break
                                 
-                                # If they are not in an existing group, create a new group
                                 if not group_found:
                                     groups.append({"group": len(groups) + 1, "participants": {flagged_human, human_id}})
                                 
@@ -452,7 +420,7 @@ class ConversationDetector(Node):
                                 self.flagged_humans.remove(flagged_human)
                                 break
 
-        # Convert sets to lists for JSON compatibility
+
         for group in groups:
             group["participants"] = list(group["participants"])
             conversations["conversations"].append(group)
